@@ -19,3 +19,7 @@
 ---
 Team Fortress 2에서 지원하는 모든 공식 맵
 (넓은 koth 맵 추천)
+  
+플레이 영상
+---
+https://www.youtube.com/clip/UgkxiPZ9f2aAyVdNezANSOwCs_g0ZgtHy3ED
