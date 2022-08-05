@@ -7,7 +7,7 @@
   
 설치방법
 ---
-1. [릴리즈](https://github.com/Modded-Madness/TF2-World-Of-Tanks/releases/latest)로 접속해 TF2-World-Of-Tanks.zip 파일을 다운로드
+1. [릴리즈](https://github.com/Modded-Madness/TF2-World-Of-Tanks/releases/latest)로 이동해 TF2-World-Of-Tanks.zip 파일을 다운로드
 2. 해당 파일을 압축풀기 한 다음, TF2 Sourcemod 서버에 덮어 씌움
   
 실행 방법
