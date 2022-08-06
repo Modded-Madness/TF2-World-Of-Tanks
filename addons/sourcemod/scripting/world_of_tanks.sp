@@ -73,6 +73,8 @@ ConVar g_cvTankMaxSpeed;
 ConVar g_cvStickybombVel;
 ConVar g_cvJumperVel;
 
+#define PLUGIN_VERSION 		"1.0"
+
 bool lateLoad = false;
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
@@ -86,7 +88,7 @@ public Plugin myinfo =
 	name = "World of Tanks",
 	description = "",
 	author = "shiko-",
-	version = "1.0"
+	version = PLUGIN_VERSION
 }
 
 public void OnPluginStart()
@@ -402,6 +404,9 @@ public void OnClientPostAdminCheck(int client)
 
 	SDKHook(client, SDKHook_PreThinkPost, OnClientThink);
 	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
+
+	PrintToChat(client, "\x01\x04[WOT]\x01 Welcome to World of Tanks version %s!", PLUGIN_VERSION);
+	PrintToChat(client, "\x01\x04Github:\x01 https://github.com/Modded-Madness/TF2-World-Of-Tanks");
 }
 
 public void OnClientThink(int client)
