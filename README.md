@@ -27,3 +27,7 @@ Team Fortress 2에서 지원하는 모든 공식 맵
 플레이 영상
 ---
 https://www.youtube.com/clip/UgkxiPZ9f2aAyVdNezANSOwCs_g0ZgtHy3ED
+
+변경 이력
+---
+우클릭으로 발사하는 직격포가 제대로 맞지 않던 문제 수정 (2022-08-06)
