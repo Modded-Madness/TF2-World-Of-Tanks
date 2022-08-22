@@ -15,6 +15,11 @@
 1. 맵 시작 전, 다음의 서버에서 다음 커맨드가 자동 실행되도록 설정 <code>sm plugins load world_of_tanks.smx</code>
 2. 모드가 바뀔 경우에는 다음의 커맨드가 실행되도록 해서 플러그인을 비활성화 <code>sm plugins unload world_of_tanks.smx</code>
 
+
+변수
+---
+sm_soldiertank_enabled 0 - 비활성화, 1 - 활성화 (기본 값 - 1)
+
 주의사항
 ---
 항상 맵이 로드 되기 전, <code>world_of_tanks.smx</code>플러그인이 먼저 로드 되어야 합니다
