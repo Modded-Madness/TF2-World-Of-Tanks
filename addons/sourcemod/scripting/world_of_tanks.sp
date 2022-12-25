@@ -22,6 +22,7 @@ bool g_bStickyJump[MAXPLAYERS+1] = false;
 bool g_bAttacking[MAXPLAYERS+1] = false;
 bool g_bForceReload[MAXPLAYERS+1] = false;
 bool g_bGroundCheck[MAXPLAYERS+1] = false;
+bool g_bUltimateMode[MAXPLAYERS+1] = false;
 bool g_bRoundActive = false;
 
 float g_flTankMaxSpeed[MAXPLAYERS+1];
@@ -32,15 +33,20 @@ float g_flStickyJumpTime[MAXPLAYERS+1];
 float g_flNextStickyTime[MAXPLAYERS+1] = -1.0;
 float g_flLastHitTime[MAXPLAYERS+1] = -1.0;
 float g_flLastFallVel[MAXPLAYERS+1];
+float g_flSpaceTime[MAXPLAYERS+1];
+float g_flUltimateDamage[MAXPLAYERS+1];
+float g_flUltimateEndTime[MAXPLAYERS+1];
 
 Handle g_hRoundTick = INVALID_HANDLE;
 Handle g_hReloadHud = INVALID_HANDLE;
+Handle g_hUltimateHud = INVALID_HANDLE;
 
 int g_iStickyBomb[MAXPLAYERS+1] = -1;
 int g_iCrosshair[MAXPLAYERS+1] = -1;
 int g_iCrosshairSprite[MAXPLAYERS+1] = -1;
 int g_iStickySprite[MAXPLAYERS+1] = -1;
 int g_LastButtons[MAXPLAYERS+1] = -1;
+int g_iLaser;
 
 #define SPR_EXPLODE			"spirites/zerogxplode.spr"
 #define MDL_TANK			"models/custom_model/tank_soldier.mdl"
@@ -59,6 +65,7 @@ int g_LastButtons[MAXPLAYERS+1] = -1;
 #define SFX_REVERSE			"player/taunt_tank_reverse.wav"
 #define SFX_STICKYBOMB		"player/taunt_moped_start_land.wav"
 #define SFX_JUMPER			"weapons/sticky_jumper_explode1.wav"
+#define SFX_ULTIMATE		"misc/doomsday_cap_open.wav"
 
 #define SNDVOL_HALF			0.5
 
@@ -72,8 +79,11 @@ ConVar g_cvEnabled;
 ConVar g_cvTankMaxSpeed;
 ConVar g_cvStickybombVel;
 ConVar g_cvJumperVel;
+ConVar g_cvUltimateCap;
+ConVar g_cvUltimateRadius;
 
 #define PLUGIN_VERSION 		"1.0"
+#define TIMER_INTERVAL		0.1
 
 bool lateLoad = false;
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
@@ -98,6 +108,7 @@ public void OnPluginStart()
 
 	HookEvent("player_spawn", OnPlayerSpawn);
 	HookEvent("player_death", OnPlayerDeath, EventHookMode_Pre);
+	HookEvent("player_hurt", OnPlayerHurt);
 	HookEvent("post_inventory_application", OnLoadoutChanged);
 
 	HookEvent("teamplay_round_start", Event_RoundStart);
@@ -113,12 +124,25 @@ public void OnPluginStart()
 	g_cvTankMaxSpeed = CreateConVar("sm_soldiertank_maxspeed", "230.0", "Max speed", 0, true, 0.0, false);
 	g_cvStickybombVel = CreateConVar("sm_soldiertank_stickybomb_velocity", "1200.0", "", 0, true, 0.0, false);
 	g_cvJumperVel = CreateConVar("sm_soldiertank_jumper_velocity", "800.0", "Max speed", 0, true, 0.0, false);
+	g_cvUltimateCap = CreateConVar("sm_soldiertank_ultimate_capacity", "1200.0", "", 0, true, 0.0, false);
+	g_cvUltimateRadius = CreateConVar("sm_soldiertank_ultimate_radius", "3.0", _, _, true, 0.01, false);
+
+	RegAdminCmd("sm_ft", test, ADMFLAG_ROOT);
 
 	g_hReloadHud = CreateHudSynchronizer();
+	g_hUltimateHud = CreateHudSynchronizer();
 
 	HookConVarChange(g_cvEnabled, OnConVarEnabledChange);
 
 	if (lateLoad) ForcePluginEnable();
+}
+
+public Action test(int client, int args)
+{
+	PrintToChat(client, "max bonus");
+	g_flUltimateDamage[client] = 1200.0;
+	
+	return Plugin_Handled;
 }
 
 public void OnConVarEnabledChange(ConVar convar, const char[] oldValue, const char[] newValue)
@@ -194,10 +218,14 @@ public void OnMapStart()
 	PrecacheSound(SFX_STICKYBOMB, true);
 	PrecacheSound(SFX_DIRECTHIT, true);
 	PrecacheSound(SFX_JUMPER, true);
+	PrecacheSound(SFX_ULTIMATE, true);
 
 	AddFolderToDownloadsTable("models/custom_model");
 	AddFolderToDownloadsTable("materials/models/custom_models/tank_soldier");
+	//AddFolderToDownloadsTable("materials/vgui/crosshairs")
 	AddFolderToDownloadsTable("sound/tank");
+
+	g_iLaser = PrecacheModel("materials/sprites/laserbeam.vmt");
 }
 
 public void OnMapEnd()
@@ -215,7 +243,7 @@ public void OnGameFrame()
 	while ((entity = FindEntityByClassname(entity, "tf_projectile_rocket")) != -1) {
 		char name[128];
 		GetEntPropString(entity, Prop_Data, "m_iName", name, sizeof(name));
-		if (StrEqual(name, "_tank_rocket") && !g_bDirectRocket[entity]) {
+		if (StrContains(name, "_tank_rocket") != -1 && !g_bDirectRocket[entity]) {
 			float vel[3];
 			float ang[3];
 			GetEntPropVector(entity, Prop_Data, "m_vecAbsVelocity", vel);
@@ -305,7 +333,10 @@ public Action OnVoiceMenu(int client, const char[] command, int argc)
 	GetCmdArg(2, cmd2, sizeof(cmd2));
 
 	if(StrEqual(cmd1, "0") && StrEqual(cmd2, "0")) {
-		PlaceTankStickyBomb(client);
+		if (IsPlayerUltimateFull(client)) {
+			ActivatePlayerUltimate(client);
+		}
+
 		return Plugin_Handled;
 	}
 
@@ -343,6 +374,8 @@ public Action OnJoinTeam(int client, const char[] command, int argc)
 
 public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 {
+	PrintToChat(client, "Welcome to World of Tanks version %s!", PLUGIN_VERSION);
+
 	if (!g_cvEnabled.BoolValue) return Plugin_Continue;
 
 	if(g_iRoundState == ROUND_INIT)  {
@@ -356,7 +389,11 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
 			CloseHandle(g_hRoundTick);
 			g_hRoundTick = INVALID_HANDLE;
 		}   
-		g_hRoundTick = CreateTimer(0.1, Timer_RoundTick, _, TIMER_REPEAT); 
+		g_hRoundTick = CreateTimer(TIMER_INTERVAL, Timer_RoundTick, _, TIMER_REPEAT); 
+
+		for (int i = 1; i <= MaxClients; i++) {
+			g_flUltimateDamage[i] = 0.0;
+		}
 	}
 
 	bool setup_time = false;
@@ -405,8 +442,8 @@ public void OnClientPostAdminCheck(int client)
 	SDKHook(client, SDKHook_PreThinkPost, OnClientThink);
 	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
 
-	PrintToChat(client, "\x01\x04[WOT]\x01 Welcome to World of Tanks version %s!", PLUGIN_VERSION);
-	PrintToChat(client, "\x01\x04Github:\x01 https://github.com/Modded-Madness/TF2-World-Of-Tanks");
+	g_flUltimateDamage[client] = 0.0;
+	g_flUltimateEndTime[client] = -1.0;	
 }
 
 public void OnClientThink(int client)
@@ -415,40 +452,53 @@ public void OnClientThink(int client)
 	int buttons = GetClientButtons(client);
 	int weapon = GetPlayerWeaponSlot(client, 0);
 	if (IsValidEntity(weapon)) {
-		char classname[128];
-		GetEdictClassname(weapon, classname, sizeof(classname));
-
-		bool empty_ammo = false;
-		if (StrEqual(classname, "tf_weapon_particle_cannon")) {
-			if (GetEntPropFloat(weapon, Prop_Send, "m_flEnergy") <= 0.0) empty_ammo = true;
+		if (IsWeaponInBonusMode(weapon)) {
+			int clip = GetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"));
+			if (clip == 0) {
+				g_flUltimateEndTime[client] = -1.0;
+				g_flUltimateDamage[client] = 0.0;
+				TF2_RemoveCondition(client, TFCond_CritOnKill);
+				TF2_RemoveCondition(client, TFCond_Buffed);
+				SetWeaponBonusMode(client, false);
+				g_bUltimateMode[client] = false;
+			}
 		}
 		else {
-			if (GetTankAmmo(client) <= 0) empty_ammo = true;
-		}
+			char classname[128];
+			GetEdictClassname(weapon, classname, sizeof(classname));
 
-		if (buttons & IN_RELOAD && !empty_ammo) {
+			bool empty_ammo = false;
 			if (StrEqual(classname, "tf_weapon_particle_cannon")) {
-				if (GetEntPropFloat(weapon, Prop_Send, "m_flEnergy") < 20.0) g_bForceReload[client] = true;
+				if (GetEntPropFloat(weapon, Prop_Send, "m_flEnergy") <= 0.0) empty_ammo = true;
 			}
 			else {
-				if (GetTankAmmo(client) < 4) g_bForceReload[client] = true;
-			}
-		}
-
-		if (empty_ammo || g_bForceReload[client]) {
-			if (g_flNextReloadEnd[client] < 0.0) {
-				g_flNextReloadEnd[client] = time + 3.0;
-
-				CreateTimer(0.0, Timer_EmitReloadStartSound, client);
-				CreateTimer(1.0, Timer_EmitReloadEndSound, client);
+				if (GetTankAmmo(client) <= 0) empty_ammo = true;
 			}
 
-			if (time >= g_flNextReloadEnd[client]) {
-				SetEntPropFloat(weapon, Prop_Send, "m_flEnergy", 20.0);
-				SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 4);
+			if (buttons & IN_RELOAD && !empty_ammo) {
+				if (StrEqual(classname, "tf_weapon_particle_cannon")) {
+					if (GetEntPropFloat(weapon, Prop_Send, "m_flEnergy") < 20.0) g_bForceReload[client] = true;
+				}
+				else {
+					if (GetTankAmmo(client) < 6) g_bForceReload[client] = true;
+				}
+			}
 
-				g_flNextReloadEnd[client] = -1.0;
-				g_bForceReload[client] = false;
+			if (empty_ammo || g_bForceReload[client]) {
+				if (g_flNextReloadEnd[client] < 0.0) {
+					g_flNextReloadEnd[client] = time + 2.0;
+
+					CreateTimer(0.0, Timer_EmitReloadStartSound, client);
+					CreateTimer(0.5, Timer_EmitReloadEndSound, client);
+				}
+
+				if (time >= g_flNextReloadEnd[client]) {
+					SetEntPropFloat(weapon, Prop_Send, "m_flEnergy", 20.0);
+					SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 6);
+
+					g_flNextReloadEnd[client] = -1.0;
+					g_bForceReload[client] = false;
+				}
 			}
 		}
 	}
@@ -594,23 +644,31 @@ public Action OnTakeDamage(int victim, int& attacker, int& inflictor, float& dam
 			}
 
 			else {
-				if (g_bDirectRocket[inflictor]) {
-					if (IsDirectHit(victim, inflictor, damagePosition)) damage = 50.0; // AP rocket, direct hit
-					else damage = 0.0; // AP rocket, splash hit
-
-					if (damagetype & DMG_USEDISTANCEMOD) damagetype &= ~DMG_USEDISTANCEMOD; // Remove damage falloff
-					changed = true;
+				if (IsRocketPowerShot(inflictor) && damagetype == TF_DMG_ROCKET_CRIT) {
+					if (damage < 33.35) {
+						damage = 33.35; // Stock rocket, splash hit
+						changed = true;
+					}
 				}
 				else {
-					if (IsDirectHit(victim, inflictor, damagePosition)) {
-						if (damage < 40.0) damage = 40.0; // Stock rocket, direct hit
+					if (g_bDirectRocket[inflictor]) {
+						if (IsDirectHit(victim, inflictor, damagePosition)) damage = 50.0; // AP rocket, direct hit
+						else damage = 0.0; // AP rocket, splash hit
+
+						if (damagetype & DMG_USEDISTANCEMOD) damagetype &= ~DMG_USEDISTANCEMOD; // Remove damage falloff
+						changed = true;
 					}
 					else {
-						damage *= 0.5;
-						if (damage < 20.0) damage = 20.0; // Stock rocket, splash hit
-					}
+						if (IsDirectHit(victim, inflictor, damagePosition)) {
+							if (damage < 40.0) damage = 40.0; // Stock rocket, direct hit
+						}
+						else {
+							damage *= 0.5;
+							if (damage < 20.0) damage = 20.0; // Stock rocket, splash hit
+						}
 
-					changed = true;
+						changed = true;
+					}
 				}
 
 				if (g_bStickyJump[victim] && time > g_flStickyJumpTime[victim]) {
@@ -646,7 +704,9 @@ public Action OnPlayerSpawn(Handle event, const char[] Name, bool Spawn_Broadcas
 	if (GetClientTeam(client) >= 2) {
 		if (TF2_GetPlayerClass(client) != TFClass_Soldier) FakeClientCommand(client, "joinclass soldier");
 
+		g_flSpaceTime[client] = -1.0;
 		CreateTimer(0.1, OnPlayerSpawnPost, client);
+		TF2_AddCondition(client, TFCond_SpeedBuffAlly, 3.0);
 	}
 
 	return Plugin_Continue;
@@ -666,6 +726,11 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 		int max_health = GetEntProp(GetPlayerResourceEntity(), Prop_Send, "m_iMaxHealth", _, attacker);
 		if (health > max_health) health = max_health;
 		SetEntityHealth(attacker, health);
+
+		if (client != attacker) {
+			float death_bonus = g_cvUltimateCap.FloatValue * 0.1;
+			AddPlayerUltimate(client, death_bonus);
+		}
 	}
 
 	SetVariantString("");
@@ -718,6 +783,25 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 	return Plugin_Continue;
 }
 
+public Action OnPlayerHurt(Handle event, const char[] Name, bool Spawn_Broadcast)
+{
+	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
+	int client = GetClientOfUserId(GetEventInt(event, "userid"));
+
+	if (IsValidClient(client)) {
+		if (IsValidClient(attacker) && IsPlayerAlive(attacker) && attacker != client) {
+			int damage = GetEventInt(event, "damageamount");
+			g_flUltimateDamage[attacker] += float(damage);
+			if (g_flUltimateDamage[attacker] > g_cvUltimateCap.FloatValue) g_flUltimateDamage[attacker] = g_cvUltimateCap.FloatValue;
+
+			//g_flLastDamageTime = GetGameTime();
+		}
+	}
+	
+	return Plugin_Continue;
+}
+
+
 public Action RemoveBody(Handle timer, any client)
 {
 	if (!IsValidClient(client)) return Plugin_Continue;
@@ -767,7 +851,9 @@ public Action OnPlayerSpawnPost(Handle timer, any client)
 	TF2Items_SetLevel(weapon, 15);
 	TF2Items_SetItemIndex(weapon, 205);
 	TF2Items_SetAttribute(weapon, 0, 2025, 1.0);
-	TF2Items_SetNumAttributes(weapon, 1);
+	TF2Items_SetAttribute(weapon, 1, 68, 1.0);
+	TF2Items_SetAttribute(weapon, 2, 4, 1.5);
+	TF2Items_SetNumAttributes(weapon, 3);
 
 	int primary = TF2Items_GiveNamedItem(client, weapon);
 	SetEntProp(primary, Prop_Send, "m_iAccountID", GetSteamAccountID(client));
@@ -867,6 +953,7 @@ stock void EndSetupPeriod()
 
 public Action Timer_RoundTick(Handle hTimer)
 {
+	float time = GetGameTime();
 	for (int i = 1; i <= MaxClients; i++) {
 		if (!IsValidClient(i)) continue;
 		if (!IsPlayerAlive(i)) continue;
@@ -874,15 +961,66 @@ public Action Timer_RoundTick(Handle hTimer)
 		if (GetClientTeam(i) > 1) {
 			int health = GetClientHealth(i) + 1;	//	10 per second
 			int max_health = GetEntProp(GetPlayerResourceEntity(), Prop_Send, "m_iMaxHealth", _, i);
-			if (health <= max_health && g_flLastHitTime[i] + 3.0 < GetGameTime()) SetEntityHealth(i, health);
+			if (health <= max_health && g_flLastHitTime[i] + 3.0 < time) SetEntityHealth(i, health);
 
 			if (g_flNextReloadEnd[i] > 0.0) {
 				char reload[128];
-				float percentage = ((g_flNextReloadEnd[i] - GetGameTime()) / 3.0) * 100.0;
+				float percentage = ((g_flNextReloadEnd[i] - time) / 3.0) * 100.0;
 
 				Format(reload, sizeof(reload), "Reload: %.0f%%", percentage);
 				SetHudTextParams(0.8, 0.845, 0.5, 255, 255, 255, 255, _, 1.0, 0.07, 0.5);
 				ShowSyncHudText(i, g_hReloadHud, reload);
+			}
+
+
+			int weapon = GetPlayerWeaponSlot(i, 0);
+			if (IsValidEntity(weapon)) {
+				int colors[3] = {255, 255, 255};
+				float ultimate_percentage = (g_flUltimateDamage[i] / g_cvUltimateCap.FloatValue) * 100.0;
+
+				if (IsPlayerUltimateFull(i) && g_bUltimateMode[i]) {
+					switch (GetClientTeam(i)) {
+						case 2: {
+							colors[0] = 255;
+							colors[1] = 0;
+							colors[2] = 0;
+						}
+						case 3: {
+							colors[0] = 0;
+							colors[1] = 0;
+							colors[2] = 255;
+						}
+					}
+
+					if (g_flUltimateEndTime[i] <= 0.0) {
+						g_flUltimateEndTime[i] = time + 10.0;
+						TF2_AddCondition(i, TFCond_CritOnKill, 10.0); // 1.0
+						TF2_AddCondition(i, TFCond_Buffed, 10.0); // 1.0
+						SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 1, 4);
+						SetWeaponBonusMode(i, true);
+
+						EmitSoundToAll(SFX_ULTIMATE, i);
+						CreateTimer(0.0, Timer_EmitReloadStartSound, i);
+						CreateTimer(0.5, Timer_EmitReloadEndSound, i);
+						g_flNextRocketFire[i] = time + 2.0;
+					}
+					else {
+						if (time > g_flUltimateEndTime[i]) {
+							g_flUltimateEndTime[i] = -1.0;
+							g_flUltimateDamage[i] = 0.0;
+							SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 0, 4);
+							SetWeaponBonusMode(i, false);
+							g_bUltimateMode[i] = false;
+						}
+					}
+				}
+
+				char ultimate[256];
+				Format(ultimate, sizeof(ultimate), "NUKE: %.0f%%", ultimate_percentage);
+				if (IsPlayerUltimateFull(i) && !IsWeaponInBonusMode(weapon)) Format(ultimate, sizeof(ultimate), "NUKE: E");
+				SetHudTextParams(-1.0, 0.8, TIMER_INTERVAL, colors[0], colors[1], colors[2], 255, _, 1.0, 0.07, 0.5);
+
+				ShowSyncHudText(i, g_hUltimateHud, ultimate);
 			}
 		}
 	}
@@ -910,12 +1048,24 @@ public Action OnPlayerRunCmd(int client, int& buttons, int& impulse, float vel[3
 	}
 	g_LastButtons[client] = buttons;
 
-	if (buttons & IN_ATTACK || buttons & IN_ATTACK2) {
-		float time = GetGameTime();
-		if (time >= g_flNextRocketFire[client]) {
-			bool directhit = false;
-			if (buttons & IN_ATTACK2) directhit = true;
-			CreateRocket(client, directhit);
+	float time = GetGameTime();
+	int primary = GetPlayerWeaponSlot(client, 0);
+	if (IsValidEntity(primary)) {
+		if (IsWeaponInBonusMode(primary)) {
+			if (buttons & IN_ATTACK) {
+				if (time >= g_flNextRocketFire[client]) {
+					CreateUltimateRocket(client);
+				}
+			}
+		}
+		else {
+			if (buttons & IN_ATTACK || buttons & IN_ATTACK2) {
+				if (time >= g_flNextRocketFire[client]) {
+					bool directhit = false;
+					if (buttons & IN_ATTACK2) directhit = true;
+					CreateRocket(client, directhit);
+				}
+			}
 		}
 	}
 
@@ -967,6 +1117,12 @@ public void OnButtonPress(int client, int& button)
 		EmitSoundToAll(SFX_REVERSE, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_CHANGEVOL, SNDVOL_HALF, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 		EmitSoundToAll(SFX_FORWARD, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_STOPLOOPING, 0.0, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 	}
+
+	if (button & IN_JUMP) {
+		g_flSpaceTime[client] = GetGameTime();
+
+		PlaceTankStickyBomb(client);
+	}
 }
 
 public void OnButtonRelease(int client, int& button)
@@ -988,6 +1144,17 @@ public void OnButtonRelease(int client, int& button)
 		EmitSoundToAll(SFX_IDLE, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_CHANGEVOL, SNDVOL_HALF, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 		EmitSoundToAll(SFX_REVERSE, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_STOPLOOPING, 0.0, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 		EmitSoundToAll(SFX_FORWARD, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_STOPLOOPING, 0.0, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
+	}
+
+	if (button & IN_JUMP) {
+		/*
+		float time_diff = GetGameTime() - g_flSpaceTime[client];
+		//PrintToChat(client, "time diff %f", time_diff);
+
+		if (time_diff >= 0.5) PlaceTankStickyBomb(client, true);
+		else PlaceTankStickyBomb(client);*/
+
+		g_flSpaceTime[client] = -1.0;
 	}
 }
 
@@ -1059,10 +1226,82 @@ stock void CreateRocket(int client, bool directhit = false)
 
 	//fake animations
 	TE_Start("PlayerAnimEvent");
-	TE_WriteNum("m_iPlayerIndex", client);
+	//TE_WriteEncodedEnt("m_hPlayer", client);
+	TE_WriteNum("m_hPlayer", GetWeaponAnimOwner(client));
 	TE_WriteNum("m_iEvent", 0);
 	TE_WriteNum("m_nData", 0);
 	TE_SendToAll();
+}
+
+stock void CreateUltimateRocket(int client)
+{
+	if (g_flNextReloadEnd[client] > 0.0) return;
+
+	float speed = 550.0;
+	float damage = 100.0;
+	float fire_rate = 0.8;
+
+	int iTeam = GetClientTeam(client);
+	int iRocketEntity = CreateEntityByName("tf_projectile_rocket");
+	if (!IsValidEntity(iRocketEntity)) return;
+
+	DispatchKeyValue(iRocketEntity, "targetname", "_tank_rocket_ultimate");
+	SetEntPropEnt(iRocketEntity, Prop_Send, "m_hOwnerEntity", client);
+	SetEntProp(iRocketEntity, Prop_Send, "m_iTeamNum", iTeam);
+	SetEntDataFloat(iRocketEntity, FindSendPropInfo("CTFProjectile_Rocket", "m_iDeflected") + 4, damage, true);  
+
+	float fPos[3];
+	float fAng[3];
+	float fVel[3];
+	GetClientEyePosition(client, fPos);
+	GetClientEyeAngles(client, fAng);
+	fPos[2] -= 28.0;
+
+	float fParam = GetEntPropFloat(client, Prop_Send, "m_flPoseParameter", 4);
+	float fAim = (fParam-0.5) * 120.0;
+	fAng[1] += fAim;
+
+	if (fAng[0] < -50.0) fAng[0] = -50.0;
+	else if (fAng[0] > 50.0) fAng[0] = 50.0;
+
+	GetAngleVectors(fAng, fVel, NULL_VECTOR, NULL_VECTOR);
+	fPos[0] += fVel[0] * 20.0;
+	fPos[1] += fVel[1] * 20.0;
+	ScaleVector(fVel, speed);
+
+	TeleportEntity(iRocketEntity, fPos, fAng, fVel);
+	DispatchSpawn(iRocketEntity);
+	ShowRocketParticle(client);
+	
+	int weapon = GetPlayerWeaponSlot(client, 0);
+	if (IsValidEntity(weapon)) {
+		if (g_bAttacking[client]) EmitSoundToAll(SFX_TANK, client);
+
+		SetEntPropEnt(iRocketEntity, Prop_Send, "m_hOriginalLauncher", weapon); // GetEntPropEnt(baseRocket, Prop_Send, "m_hOriginalLauncher")
+		SetEntPropEnt(iRocketEntity, Prop_Send, "m_hLauncher", weapon); // GetEntPropEnt(baseRocket, Prop_Send, "m_hLauncher")
+		SetEntProp(iRocketEntity, Prop_Send, "m_bCritical", 1); // GetEntPropEnt(baseRocket, Prop_Send, "m_hLauncher")
+
+		g_flNextRocketFire[client] = GetGameTime() + fire_rate;
+		SubtractTankAmmo(client);
+	}
+
+	//fake animations
+	TE_Start("PlayerAnimEvent");
+	//TE_WriteEncodedEnt("m_hPlayer", client);
+	TE_WriteNum("m_hPlayer", GetWeaponAnimOwner(client));
+	TE_WriteNum("m_iEvent", 0);
+	TE_WriteNum("m_nData", 0);
+	TE_SendToAll();
+}
+
+stock int GetWeaponAnimOwner(int client)
+{
+	if (!IsValidClient(client)) return 0;
+
+	int active_weapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+	if (!IsValidEntity(active_weapon)) return 0;
+	
+	return GetEntProp(active_weapon, Prop_Send, "m_hOwnerEntity");
 }
 
 stock bool RemoveWearable(int client, int id)
@@ -1165,7 +1404,7 @@ stock void ShowStompEffect(int client)
     CreateTimer(5.0, RemoveParticle, particle);
 }
 
-stock void PlaceTankStickyBomb(int client)
+stock void PlaceTankStickyBomb(int client, bool force_jumper = false)
 {
 	if (IsStickyBomb(g_iStickyBomb[client])) {
 		char targetname[128];
@@ -1206,8 +1445,8 @@ stock void PlaceTankStickyBomb(int client)
 	SetEntProp(bomb, Prop_Data, "m_CollisionGroup", 2);
 	g_iStickyBomb[client] = bomb;
 
-	int buttons = GetClientButtons(client);
-	if (buttons & IN_JUMP) {
+	//int buttons = GetClientButtons(client);
+	if (force_jumper) {
 		SetEntityModel(bomb, MDL_JUMPER);
 		SetEntPropString(bomb, Prop_Data, "m_iName", "_jumper_");
 		g_flNextStickyTime[client] = time + 4.0;
@@ -1461,5 +1700,72 @@ stock bool IsMapMVM()
 	GetCurrentMap(mapname, sizeof(mapname));
 
 	if (StrContains(mapname, "mvm_", false) == 0) return true;
+	return false;
+}
+
+stock float AddPlayerUltimate(int client, float amount)
+{
+	float new_value = g_flUltimateDamage[client] + amount;
+	if (new_value > g_cvUltimateCap.FloatValue) new_value = g_cvUltimateCap.FloatValue;
+
+	g_flUltimateDamage[client] = new_value;
+	return new_value;
+}
+
+stock bool IsPlayerUltimateFull(int client)
+{
+	return g_flUltimateDamage[client] >= g_cvUltimateCap.FloatValue;
+}
+
+stock void ActivatePlayerUltimate(int client)
+{
+	if (g_bUltimateMode[client]) return;
+
+	FakeClientCommand(client, "voicemenu 2 1"); // battlecry
+	g_bUltimateMode[client] = true;
+}
+
+stock void SetWeaponBonusMode(int client, bool bonus = false)
+{
+	int weapon = GetPlayerWeaponSlot(client, 0);
+	if (!IsValidEntity(weapon)) return;
+	
+	Address attrib = TF2Attrib_GetByName(weapon, "mod max primary clip override");
+	if (bonus) {
+		if (attrib == Address_Null) {
+			TF2Attrib_SetByName(weapon, "mod max primary clip override", -1.0);
+			TF2Attrib_SetByName(weapon, "Projectile speed decreased", 0.5);
+			TF2Attrib_SetByName(weapon, "Blast radius increased", g_cvUltimateRadius.FloatValue);
+			TF2Attrib_SetByName(weapon, "maxammo primary reduced", 0.07);
+		}
+	}
+	else {
+		if (attrib != Address_Null) {
+			TF2Attrib_RemoveByName(weapon, "mod max primary clip override");
+			TF2Attrib_RemoveByName(weapon, "Projectile speed decreased");
+			TF2Attrib_RemoveByName(weapon, "Blast radius increased");
+			TF2Attrib_RemoveByName(weapon, "maxammo primary reduced");
+		}
+	}
+}
+stock bool IsWeaponInBonusMode(int weapon)
+{
+	if (!IsValidEntity(weapon)) return false;
+
+	return (TF2Attrib_GetByName(weapon, "mod max primary clip override") != Address_Null);
+}
+
+stock bool IsRocketPowerShot(int rocket)
+{
+	if (!IsValidEntity(rocket)) return false;
+
+	char classname[128];
+	GetEdictClassname(rocket, classname, sizeof(classname));
+	if (!StrEqual(classname, "tf_projectile_rocket")) return false;
+
+	char targetname[128];
+	GetEntPropString(rocket, Prop_Data, "m_iName", targetname, sizeof(targetname));
+	if (StrContains(targetname, "_tank_rocket_ultimate") != -1) return true;
+
 	return false;
 }
