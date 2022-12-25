@@ -82,7 +82,7 @@ ConVar g_cvJumperVel;
 ConVar g_cvUltimateCap;
 ConVar g_cvUltimateRadius;
 
-#define PLUGIN_VERSION 		"1.0"
+#define PLUGIN_VERSION 		"1.1"
 #define TIMER_INTERVAL		0.1
 
 bool lateLoad = false;
