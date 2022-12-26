@@ -374,7 +374,7 @@ public Action OnJoinTeam(int client, const char[] command, int argc)
 
 public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 {
-	PrintToChat(client, "Welcome to World of Tanks version %s!", PLUGIN_VERSION);
+	PrintToChatAll("Welcome to World of Tanks version %s!", PLUGIN_VERSION);
 
 	if (!g_cvEnabled.BoolValue) return Plugin_Continue;
 
