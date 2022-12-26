@@ -17,21 +17,21 @@
 int g_iRoundState = ROUND_INIT;
 bool g_bNewRound = false;
 
-bool g_bDirectRocket[2048] = false;
-bool g_bStickyJump[MAXPLAYERS+1] = false;
-bool g_bAttacking[MAXPLAYERS+1] = false;
-bool g_bForceReload[MAXPLAYERS+1] = false;
-bool g_bGroundCheck[MAXPLAYERS+1] = false;
-bool g_bUltimateMode[MAXPLAYERS+1] = false;
+bool g_bDirectRocket[2048] = { false, ... };
+bool g_bStickyJump[MAXPLAYERS+1] = { false, ... };
+bool g_bAttacking[MAXPLAYERS+1] = { false, ... };
+bool g_bForceReload[MAXPLAYERS+1] = { false, ... };
+bool g_bGroundCheck[MAXPLAYERS+1] = { false, ... };
+bool g_bUltimateMode[MAXPLAYERS+1] = { false, ... };
 bool g_bRoundActive = false;
 
 float g_flTankMaxSpeed[MAXPLAYERS+1];
-float g_flNextRocketFire[MAXPLAYERS+1] = -1.0;
-float g_flNextReloadEnd[MAXPLAYERS+1] = -1.0;
+float g_flNextRocketFire[MAXPLAYERS+1] = { -1.0, ... };
+float g_flNextReloadEnd[MAXPLAYERS+1] = { -1.0, ... };
 float g_flRocketAngles[MAXPLAYERS+1];
 float g_flStickyJumpTime[MAXPLAYERS+1];
-float g_flNextStickyTime[MAXPLAYERS+1] = -1.0;
-float g_flLastHitTime[MAXPLAYERS+1] = -1.0;
+float g_flNextStickyTime[MAXPLAYERS+1] = { -1.0, ... };
+float g_flLastHitTime[MAXPLAYERS+1] = { -1.0, ... };
 float g_flLastFallVel[MAXPLAYERS+1];
 float g_flSpaceTime[MAXPLAYERS+1];
 float g_flUltimateDamage[MAXPLAYERS+1];
@@ -41,11 +41,11 @@ Handle g_hRoundTick = INVALID_HANDLE;
 Handle g_hReloadHud = INVALID_HANDLE;
 Handle g_hUltimateHud = INVALID_HANDLE;
 
-int g_iStickyBomb[MAXPLAYERS+1] = -1;
-int g_iCrosshair[MAXPLAYERS+1] = -1;
-int g_iCrosshairSprite[MAXPLAYERS+1] = -1;
-int g_iStickySprite[MAXPLAYERS+1] = -1;
-int g_LastButtons[MAXPLAYERS+1] = -1;
+int g_iStickyBomb[MAXPLAYERS+1] = { -1, ...};
+int g_iCrosshair[MAXPLAYERS+1] = { -1, ...};
+int g_iCrosshairSprite[MAXPLAYERS+1] = { -1, ...};
+int g_iStickySprite[MAXPLAYERS+1] = { -1, ...};
+int g_LastButtons[MAXPLAYERS+1] = { -1, ...};
 int g_iLaser;
 
 #define SPR_EXPLODE			"spirites/zerogxplode.spr"
@@ -861,13 +861,13 @@ public Action OnPlayerSpawnPost(Handle timer, any client)
 	EquipPlayerWeapon(client, primary);
 
 	int secondary = CreateEntityByName("tf_weapon_buff_item");
-    SetEntProp(secondary, Prop_Send, "m_iItemDefinitionIndex", 129);     
-    SetEntProp(secondary, Prop_Send, "m_bInitialized", 1);
-    SetEntProp(secondary, Prop_Send, "m_iEntityLevel", 100);
-    SetEntProp(secondary, Prop_Send, "m_iEntityQuality", 5);
-
-    DispatchSpawn(secondary); 
-    EquipPlayerWeapon(client, secondary);
+	SetEntProp(secondary, Prop_Send, "m_iItemDefinitionIndex", 129);     
+	SetEntProp(secondary, Prop_Send, "m_bInitialized", 1);
+	SetEntProp(secondary, Prop_Send, "m_iEntityLevel", 100);
+	SetEntProp(secondary, Prop_Send, "m_iEntityQuality", 5);
+	
+	DispatchSpawn(secondary); 
+	EquipPlayerWeapon(client, secondary);
 
     /*
 	Handle charge = TF2Items_CreateItem(PRESERVE_ATTRIBUTES);
