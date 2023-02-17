@@ -17,41 +17,53 @@
 int g_iRoundState = ROUND_INIT;
 bool g_bNewRound = false;
 
-bool g_bDirectRocket[2048] = { false, ... };
-bool g_bStickyJump[MAXPLAYERS+1] = { false, ... };
-bool g_bAttacking[MAXPLAYERS+1] = { false, ... };
-bool g_bForceReload[MAXPLAYERS+1] = { false, ... };
-bool g_bGroundCheck[MAXPLAYERS+1] = { false, ... };
-bool g_bUltimateMode[MAXPLAYERS+1] = { false, ... };
+bool g_bDirectRocket[2048] = {false, ...};
+bool g_bStickyJump[MAXPLAYERS+1] = {false, ...};
+bool g_bAttacking[MAXPLAYERS+1] = {false, ...};
+bool g_bForceReload[MAXPLAYERS+1] = {false, ...};
+bool g_bGroundCheck[MAXPLAYERS+1] = {false, ...};
+bool g_bUltimateMode[MAXPLAYERS+1] = {false, ...};
+bool g_bUltimateEnabled[MAXPLAYERS+1] = {false, ...};
+bool g_bUltimateRagdoll[MAXPLAYERS+1] = {false, ...};
 bool g_bRoundActive = false;
 
 float g_flTankMaxSpeed[MAXPLAYERS+1];
-float g_flNextRocketFire[MAXPLAYERS+1] = { -1.0, ... };
-float g_flNextReloadEnd[MAXPLAYERS+1] = { -1.0, ... };
+float g_flTankOldSpeed[MAXPLAYERS+1];
+float g_flNextRocketFire[MAXPLAYERS+1] = {-1.0, ...};
+float g_flNextReloadEnd[MAXPLAYERS+1] = {-1.0, ...};
 float g_flRocketAngles[MAXPLAYERS+1];
 float g_flStickyJumpTime[MAXPLAYERS+1];
-float g_flNextStickyTime[MAXPLAYERS+1] = { -1.0, ... };
-float g_flLastHitTime[MAXPLAYERS+1] = { -1.0, ... };
+float g_flNextStickyTime[MAXPLAYERS+1] = {-1.0, ...};
+float g_flLastHitTime[MAXPLAYERS+1] = {-1.0, ...};
 float g_flLastFallVel[MAXPLAYERS+1];
 float g_flSpaceTime[MAXPLAYERS+1];
 float g_flUltimateDamage[MAXPLAYERS+1];
 float g_flUltimateEndTime[MAXPLAYERS+1];
+float g_flOldDamage[MAXPLAYERS+1];
 
 Handle g_hRoundTick = INVALID_HANDLE;
 Handle g_hReloadHud = INVALID_HANDLE;
 Handle g_hUltimateHud = INVALID_HANDLE;
+Handle g_hUltimateTimer[MAXPLAYERS+1] = {INVALID_HANDLE, ...};
 
-int g_iStickyBomb[MAXPLAYERS+1] = { -1, ...};
-int g_iCrosshair[MAXPLAYERS+1] = { -1, ...};
-int g_iCrosshairSprite[MAXPLAYERS+1] = { -1, ...};
-int g_iStickySprite[MAXPLAYERS+1] = { -1, ...};
-int g_LastButtons[MAXPLAYERS+1] = { -1, ...};
+#define ULTIMATE_NONE		0
+#define ULTIMATE_FULL		1
+#define ULTIMATE_ACTIVATED	2
+#define ULTIMATE_EXPLODING	3
+#define ULTIMATE_EXPLODED	4
+int g_iUltimateStatus[MAXPLAYERS+1] = {-1, ...};
+
+int g_iStickyBomb[MAXPLAYERS+1] = {-1, ...};
+int g_iCrosshair[MAXPLAYERS+1] = {-1, ...};
+int g_iCrosshairSprite[MAXPLAYERS+1] = {-1, ...};
+int g_iStickySprite[MAXPLAYERS+1] = {-1, ...};
+int g_LastButtons[MAXPLAYERS+1] = {-1, ...};
 int g_iLaser;
 
 #define SPR_EXPLODE			"spirites/zerogxplode.spr"
 #define MDL_TANK			"models/custom_model/tank_soldier.mdl"
 #define MDL_AP_SHELL		"models/weapons/w_models/w_rocket_airstrike/w_rocket_airstrike.mdl"
-#define MDL_STICKYBOMB		"models/weapons/w_models/w_stickybomb.mdl"
+#define MDL_STICKYBOMB		"models/weapons/w_models/w_stickybomb_d.mdl"
 #define MDL_JUMPER			"models/weapons/w_models/w_stickybomb2.mdl"
 
 #define SFX_TANK			"player/taunt_tank_shoot.wav"
@@ -65,7 +77,14 @@ int g_iLaser;
 #define SFX_REVERSE			"player/taunt_tank_reverse.wav"
 #define SFX_STICKYBOMB		"player/taunt_moped_start_land.wav"
 #define SFX_JUMPER			"weapons/sticky_jumper_explode1.wav"
-#define SFX_ULTIMATE		"misc/doomsday_cap_open.wav"
+#define SFX_ULTIMATE		"mvm/sentrybuster/mvm_sentrybuster_spin.wav"
+#define SFX_ULTIMATE_INTRO	"mvm/sentrybuster/mvm_sentrybuster_intro.wav"
+#define SFX_ULTIMATE_BEEP	"mvm/mvm_deploy_giant.wav"
+#define SFX_ULTIMATE_EXPLO	"mvm/sentrybuster/mvm_sentrybuster_explode.wav"
+#define SFX_TIMER 			"misc/rd_finale_beep01.wav"
+#define SFX_NULL			"misc/null.wav"
+#define SFX_CHARGED 		"player/recharged.wav"
+
 
 #define SNDVOL_HALF			0.5
 
@@ -81,8 +100,9 @@ ConVar g_cvStickybombVel;
 ConVar g_cvJumperVel;
 ConVar g_cvUltimateCap;
 ConVar g_cvUltimateRadius;
+ConVar g_cvNukeRadius;
 
-#define PLUGIN_VERSION 		"1.1"
+#define PLUGIN_VERSION 		"1.0"
 #define TIMER_INTERVAL		0.1
 
 bool lateLoad = false;
@@ -125,16 +145,22 @@ public void OnPluginStart()
 	g_cvStickybombVel = CreateConVar("sm_soldiertank_stickybomb_velocity", "1200.0", "", 0, true, 0.0, false);
 	g_cvJumperVel = CreateConVar("sm_soldiertank_jumper_velocity", "800.0", "Max speed", 0, true, 0.0, false);
 	g_cvUltimateCap = CreateConVar("sm_soldiertank_ultimate_capacity", "1200.0", "", 0, true, 0.0, false);
-	g_cvUltimateRadius = CreateConVar("sm_soldiertank_ultimate_radius", "3.0", _, _, true, 0.01, false);
+	g_cvUltimateRadius = CreateConVar("sm_soldiertank_ultimate_radius", "300", _, _, true, 0.01, false);
 
 	RegAdminCmd("sm_ft", test, ADMFLAG_ROOT);
 
 	g_hReloadHud = CreateHudSynchronizer();
 	g_hUltimateHud = CreateHudSynchronizer();
 
+	//AddNormalSoundHook(OnSoundHook);
 	HookConVarChange(g_cvEnabled, OnConVarEnabledChange);
 
 	if (lateLoad) ForcePluginEnable();
+}
+
+public void OnPluginEnd()
+{
+	ForcePluginDisable();
 }
 
 public Action test(int client, int args)
@@ -187,6 +213,10 @@ public void ForcePluginDisable()
 		}
 	}
 
+	ConVar cvar = FindConVar("sv_footsteps");
+	cvar.SetBool(true);
+	delete cvar;  
+
 	lateLoad = false;
 }
 
@@ -219,6 +249,12 @@ public void OnMapStart()
 	PrecacheSound(SFX_DIRECTHIT, true);
 	PrecacheSound(SFX_JUMPER, true);
 	PrecacheSound(SFX_ULTIMATE, true);
+	PrecacheSound(SFX_ULTIMATE_INTRO, true);
+	PrecacheSound(SFX_ULTIMATE_BEEP, true);
+	PrecacheSound(SFX_ULTIMATE_EXPLO, true);
+	PrecacheSound(SFX_TIMER, true);
+	PrecacheSound(SFX_NULL, true);
+	PrecacheSound(SFX_CHARGED, true);
 
 	AddFolderToDownloadsTable("models/custom_model");
 	AddFolderToDownloadsTable("materials/models/custom_models/tank_soldier");
@@ -226,6 +262,11 @@ public void OnMapStart()
 	AddFolderToDownloadsTable("sound/tank");
 
 	g_iLaser = PrecacheModel("materials/sprites/laserbeam.vmt");
+
+	ConVar cvar = FindConVar("sv_footsteps");
+	SetConVarFlags(cvar, GetConVarFlags(cvar) & ~FCVAR_NOTIFY);
+	cvar.SetBool(false);
+	delete cvar;  
 }
 
 public void OnMapEnd()
@@ -233,6 +274,7 @@ public void OnMapEnd()
 	if (!g_cvEnabled.BoolValue) return;
 
 	g_iRoundState = ROUND_END;
+	ForcePluginDisable();
 }
 
 public void OnGameFrame()
@@ -282,6 +324,28 @@ public void TF2_OnConditionAdded(int client, TFCond condition)
 		}
 	}
 }
+
+/*
+public Action OnSoundHook(int clients[MAXPLAYERS], int &numClients, char sample[PLATFORM_MAX_PATH],
+	  int &client, int &channel, float &volume, int &level, int &pitch, int &flags,
+	  char soundEntry[PLATFORM_MAX_PATH], int &seed)
+{
+	if (!g_cvEnabled.BoolValue) return Plugin_Continue;
+	if (!IsValidClient(client)) return Plugin_Continue;
+
+	TFClassType class = TF2_GetPlayerClass(client);
+	if (class == TFClass_Soldier) {
+		if (StrContains(sample, "player/footsteps/", false) != -1) {
+			Format(sample, sizeof(sample), SFX_NULL);
+			volume = 0.0;
+			EmitSoundToAll(sample, client, _, _, _, 0.25);
+
+			return Plugin_Changed;
+		}
+	}
+
+	return Plugin_Continue; 
+}*/
 
 public void OnAmmoTouch(int ammo, int client)
 {
@@ -374,8 +438,6 @@ public Action OnJoinTeam(int client, const char[] command, int argc)
 
 public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 {
-	PrintToChatAll("Welcome to World of Tanks version %s!", PLUGIN_VERSION);
-
 	if (!g_cvEnabled.BoolValue) return Plugin_Continue;
 
 	if(g_iRoundState == ROUND_INIT)  {
@@ -393,6 +455,7 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
 
 		for (int i = 1; i <= MaxClients; i++) {
 			g_flUltimateDamage[i] = 0.0;
+			g_flOldDamage[i] = 0.0;
 		}
 	}
 
@@ -403,6 +466,10 @@ public Action Event_RoundStart(Event event, const char[] name, bool dontBroadcas
 			if (GetEntProp(index, Prop_Send, "m_nSetupTimeLength") > 0) setup_time = true;
 		}
 	}
+
+	ConVar cvar = FindConVar("sv_footsteps");
+	cvar.SetBool(false);
+	delete cvar;  
 
 	g_bRoundActive = false;
 	if (!setup_time) EndSetupPeriod();
@@ -420,7 +487,7 @@ public Action Event_SetupEnd(Event event, const char[] name, bool dontBroadcast)
 public Action Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 {
 	if (!g_cvEnabled.BoolValue) return Plugin_Continue;
-	g_bNewRound = (GetEventBool(event, "full_round") || (GetEventInt(event, "team") == view_as<int>(TFTeam_Red)));
+	g_bNewRound = (GetEventBool(event, "full_round"));
 
 	g_iRoundState = ROUND_END;
 	
@@ -443,7 +510,9 @@ public void OnClientPostAdminCheck(int client)
 	SDKHook(client, SDKHook_OnTakeDamage, OnTakeDamage);
 
 	g_flUltimateDamage[client] = 0.0;
-	g_flUltimateEndTime[client] = -1.0;	
+	g_flOldDamage[client] = 0.0;
+	g_flUltimateEndTime[client] = -1.0;
+	PrintToChat(client, "Welcome to World of Tanks version %s!", PLUGIN_VERSION);
 }
 
 public void OnClientThink(int client)
@@ -457,8 +526,10 @@ public void OnClientThink(int client)
 			if (clip == 0) {
 				g_flUltimateEndTime[client] = -1.0;
 				g_flUltimateDamage[client] = 0.0;
+				g_flOldDamage[client] = 0.0;
 				TF2_RemoveCondition(client, TFCond_CritOnKill);
 				TF2_RemoveCondition(client, TFCond_Buffed);
+				TF2_RemoveCondition(client, TFCond_Ubercharged);
 				SetWeaponBonusMode(client, false);
 				g_bUltimateMode[client] = false;
 			}
@@ -484,7 +555,7 @@ public void OnClientThink(int client)
 				}
 			}
 
-			if (empty_ammo || g_bForceReload[client]) {
+			if ((empty_ammo || g_bForceReload[client]) && !g_bUltimateMode[client]) {
 				if (g_flNextReloadEnd[client] < 0.0) {
 					g_flNextReloadEnd[client] = time + 2.0;
 
@@ -561,7 +632,13 @@ public void OnClientThink(int client)
 	g_flLastFallVel[client] = GetEntPropFloat(client, Prop_Send, "m_flFallVelocity");
 
 	if (TF2_IsPlayerInCondition(client, TFCond_SpeedBuffAlly)) g_flTankMaxSpeed[client] *= 1.8;
-	SetEntPropFloat(client, Prop_Data, "m_flMaxspeed", g_bRoundActive ? g_flTankMaxSpeed[client] : 0.1); 
+	if (g_iUltimateStatus[client] >= ULTIMATE_EXPLODING) {
+		g_flTankOldSpeed[client] -= 3.0;
+		if (g_flTankOldSpeed[client] < g_cvTankMaxSpeed.FloatValue * 0.3) g_flTankOldSpeed[client] = g_cvTankMaxSpeed.FloatValue * 0.3;
+
+		SetEntPropFloat(client, Prop_Data, "m_flMaxspeed", g_bRoundActive ? g_flTankOldSpeed[client] : 0.1); 
+	}
+	else SetEntPropFloat(client, Prop_Data, "m_flMaxspeed", g_bRoundActive ? g_flTankMaxSpeed[client] : 0.1); 
 
 	UpdateCrosshairAnchor(client);
 
@@ -570,6 +647,8 @@ public void OnClientThink(int client)
 
 	//SetEntProp(client, Prop_Send, "m_nForceTauntCam", 2);
     //SetEntProp(client, Prop_Send, "m_bAllowMoveDuringTaunt", 1);
+
+    
 }
 
 public Action Timer_EmitReloadStartSound(Handle timer, any client) {
@@ -585,6 +664,14 @@ public Action Timer_EmitReloadEndSound(Handle timer, any client) {
 	if (!IsPlayerAlive(client)) return Plugin_Continue;
 
 	EmitSoundToClient(client, SFX_RELOAD_END);
+	return Plugin_Continue;
+}
+
+public Action Timer_EmitDetonateSound(Handle timer, any client) {
+	if (!IsValidClient(client)) return Plugin_Continue;
+	if (!IsPlayerAlive(client)) return Plugin_Continue;
+
+	EmitSoundToAll(SFX_ULTIMATE, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_CHANGEVOL, SNDVOL_HALF, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 	return Plugin_Continue;
 }
 
@@ -676,7 +763,7 @@ public Action OnTakeDamage(int victim, int& attacker, int& inflictor, float& dam
 					GetEdictClassname(inflictor, classname, sizeof(classname));
 					if (StrContains(classname, "tf_projectile_rocket") != -1) {
 						if (g_bDirectRocket[inflictor] && IsDirectHit(victim, inflictor, damagePosition)) {
-							damage = 1000.0;
+							damage = 200.0;
 							SetEntityHealth(attacker, 200);
 
 							damagetype |= DMG_CRIT;
@@ -701,10 +788,28 @@ public Action OnPlayerSpawn(Handle event, const char[] Name, bool Spawn_Broadcas
 	int client = GetClientOfUserId(GetEventInt(event, "userid"));
 	if (IsMapMVM() && IsFakeClient(client)) return Plugin_Continue;
 
+	if (g_hUltimateTimer[client] != INVALID_HANDLE) {
+		CloseHandle(g_hUltimateTimer[client]);
+		g_hUltimateTimer[client] = INVALID_HANDLE;
+	}
+
 	if (GetClientTeam(client) >= 2) {
 		if (TF2_GetPlayerClass(client) != TFClass_Soldier) FakeClientCommand(client, "joinclass soldier");
 
 		g_flSpaceTime[client] = -1.0;
+		g_flTankOldSpeed[client] = -1.0;
+		g_bUltimateRagdoll[client] = false;
+		
+		if (g_bUltimateEnabled[client]) {
+			g_bUltimateEnabled[client] = false;
+			g_flUltimateDamage[client] = 0.0;
+			g_flOldDamage[client] = 0.0;
+		}
+
+		if (g_iUltimateStatus[client] == ULTIMATE_EXPLODED) {
+			g_iUltimateStatus[client] = ULTIMATE_NONE;
+		}
+
 		CreateTimer(0.1, OnPlayerSpawnPost, client);
 		TF2_AddCondition(client, TFCond_SpeedBuffAlly, 3.0);
 	}
@@ -721,6 +826,11 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
 	if (g_iRoundState != ROUND_INGAME) return Plugin_Continue;
 
+	if (g_hUltimateTimer[client] != INVALID_HANDLE) {
+		CloseHandle(g_hUltimateTimer[client]);
+		g_hUltimateTimer[client] = INVALID_HANDLE;
+	}
+
 	if (IsValidClient(attacker)) {
 		int health = GetClientHealth(attacker) + 100;
 		int max_health = GetEntProp(GetPlayerResourceEntity(), Prop_Send, "m_iMaxHealth", _, attacker);
@@ -730,6 +840,16 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 		if (client != attacker) {
 			float death_bonus = g_cvUltimateCap.FloatValue * 0.1;
 			AddPlayerUltimate(client, death_bonus);
+		}
+
+		//float time = GetGameTime();
+		if (g_bUltimateMode[client]) {
+			if (g_flUltimateEndTime[client] != -1.0) g_flUltimateEndTime[client] = -1.0;
+				
+			g_flUltimateDamage[client] = 0.0;
+			g_flOldDamage[client] = 0.0;
+			g_bUltimateMode[client] = false;
+			g_bUltimateEnabled[client] = false;
 		}
 	}
 
@@ -750,18 +870,25 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 
 		int owner = StringToInt(split[1]);
 		if (owner == attacker && StrEqual(classname, "env_explosion")) {
-			SetEventString(event, "weapon", "sticky_resistance");
-			SetEventString(event, "weapon_logclassname", "sticky_resistance");
-			SetEventInt(event, "weaponid", 35);
+			char weapon_string[128];
+			weapon_string = (StrEqual(split[0], "|ultimate")) ? "world" : "sticky_resistance";
+			
+			int customkill = (StrEqual(split[0], "|ultimate")) ? TF_CUSTOM_SUICIDE : TF_CUSTOM_DEFENSIVE_STICKY;
+			int weapon_def = (StrEqual(split[0], "|ultimate")) ? -1 : 130;
+			int weapon_id = (StrEqual(split[0], "|ultimate")) ? TF_WEAPON_NONE : 35;
+
+			SetEventString(event, "weapon", weapon_string);
+			SetEventString(event, "weapon_logclassname", weapon_string);
+			SetEventInt(event, "weaponid", weapon_id);
 
 			int primary = GetPlayerWeaponSlot(attacker, 0);
 			if (IsValidEntity(primary)) SetEventInt(event, "inflictor_entindex", primary);
 			else SetEventInt(event, "inflictor_entindex", attacker);
 			
 			SetEventInt(event, "damagebits", 393280);
-			SetEventInt(event, "customkill", 26);
+			SetEventInt(event, "customkill", customkill);
 			SetEventInt(event, "death_flags", 128);
-			SetEventInt(event, "weapon_def_index", 130);
+			SetEventInt(event, "weapon_def_index", weapon_def);
 
 			int new_value = GetEntProp(attacker, Prop_Send, "m_nStreaks") + 1;
 			SetEntProp(attacker, Prop_Send, "m_nStreaks", new_value);
@@ -776,6 +903,7 @@ public Action OnPlayerDeath(Handle event, const char[] Name, bool Spawn_Broadcas
 		}
 	}
 
+	CreateTimer(0.0, RemoveBody, client);
 	DestroyStickyBomb(client);
 	RemoveCrosshair(client);
 
@@ -791,9 +919,7 @@ public Action OnPlayerHurt(Handle event, const char[] Name, bool Spawn_Broadcast
 	if (IsValidClient(client)) {
 		if (IsValidClient(attacker) && IsPlayerAlive(attacker) && attacker != client) {
 			int damage = GetEventInt(event, "damageamount");
-			g_flUltimateDamage[attacker] += float(damage);
-			if (g_flUltimateDamage[attacker] > g_cvUltimateCap.FloatValue) g_flUltimateDamage[attacker] = g_cvUltimateCap.FloatValue;
-
+			AddPlayerUltimate(attacker, float(damage));
 			//g_flLastDamageTime = GetGameTime();
 		}
 	}
@@ -805,10 +931,42 @@ public Action OnPlayerHurt(Handle event, const char[] Name, bool Spawn_Broadcast
 public Action RemoveBody(Handle timer, any client)
 {
 	if (!IsValidClient(client)) return Plugin_Continue;
+	if (!g_bUltimateRagdoll[client]) return Plugin_Continue;
 
 	int ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
-	if(IsValidEntity(ragdoll)) AcceptEntityInput(ragdoll, "kill");
+	if(IsValidEntity(ragdoll)) {
+		AcceptEntityInput(ragdoll, "kill");
 
+		int entity = CreateEntityByName("tf_ragdoll");
+		if (IsValidEntity(entity)) {
+			float vel[3];
+			vel[2] = 800000.552734; //Muhahahahaha
+			
+			SetEntPropVector(entity, Prop_Send, "m_vecRagdollVelocity", vel);
+			SetEntPropVector(entity, Prop_Send, "m_vecForce", vel);
+
+			int team = GetClientTeam(client);
+			int class = view_as<int>(TF2_GetPlayerClass(client));
+
+			float origin[3];
+			SetEntPropVector(entity, Prop_Send, "m_vecRagdollOrigin", origin); 
+			SetEntPropEnt(entity, Prop_Send, "m_hPlayer", client);
+			SetEntProp(entity, Prop_Send, "m_iTeam", team);
+			SetEntProp(entity, Prop_Send, "m_iClass", class);
+			SetEntProp(entity, Prop_Send, "m_nForceBone", 1);
+
+			SetEntPropFloat(entity, Prop_Send, "m_flHeadScale", GetEntPropFloat(client, Prop_Send, "m_flHeadScale"));
+			SetEntPropFloat(entity, Prop_Send, "m_flTorsoScale", GetEntPropFloat(client, Prop_Send, "m_flTorsoScale"));
+			SetEntPropFloat(entity, Prop_Send, "m_flHandScale", GetEntPropFloat(client, Prop_Send, "m_flHandScale"));  
+
+			SetEntPropEnt(client, Prop_Send, "m_hRagdoll", entity);
+			 
+			DispatchSpawn(entity);
+			CreateTimer(10.0, RemoveRagdoll, entity);
+		}
+	}
+
+	g_bUltimateRagdoll[client] = false;
 	return Plugin_Continue;
 }
 
@@ -861,13 +1019,13 @@ public Action OnPlayerSpawnPost(Handle timer, any client)
 	EquipPlayerWeapon(client, primary);
 
 	int secondary = CreateEntityByName("tf_weapon_buff_item");
-	SetEntProp(secondary, Prop_Send, "m_iItemDefinitionIndex", 129);     
-	SetEntProp(secondary, Prop_Send, "m_bInitialized", 1);
-	SetEntProp(secondary, Prop_Send, "m_iEntityLevel", 100);
-	SetEntProp(secondary, Prop_Send, "m_iEntityQuality", 5);
-	
-	DispatchSpawn(secondary); 
-	EquipPlayerWeapon(client, secondary);
+    SetEntProp(secondary, Prop_Send, "m_iItemDefinitionIndex", 129);     
+    SetEntProp(secondary, Prop_Send, "m_bInitialized", 1);
+    SetEntProp(secondary, Prop_Send, "m_iEntityLevel", 100);
+    SetEntProp(secondary, Prop_Send, "m_iEntityQuality", 5);
+
+    DispatchSpawn(secondary); 
+    EquipPlayerWeapon(client, secondary);
 
     /*
 	Handle charge = TF2Items_CreateItem(PRESERVE_ATTRIBUTES);
@@ -963,7 +1121,7 @@ public Action Timer_RoundTick(Handle hTimer)
 			int max_health = GetEntProp(GetPlayerResourceEntity(), Prop_Send, "m_iMaxHealth", _, i);
 			if (health <= max_health && g_flLastHitTime[i] + 3.0 < time) SetEntityHealth(i, health);
 
-			if (g_flNextReloadEnd[i] > 0.0) {
+			if (g_flNextReloadEnd[i] > 0.0 && !g_bUltimateMode[i]) {
 				char reload[128];
 				float percentage = ((g_flNextReloadEnd[i] - time) / 3.0) * 100.0;
 
@@ -978,46 +1136,73 @@ public Action Timer_RoundTick(Handle hTimer)
 				int colors[3] = {255, 255, 255};
 				float ultimate_percentage = (g_flUltimateDamage[i] / g_cvUltimateCap.FloatValue) * 100.0;
 
-				if (IsPlayerUltimateFull(i) && g_bUltimateMode[i]) {
-					switch (GetClientTeam(i)) {
-						case 2: {
-							colors[0] = 255;
-							colors[1] = 0;
-							colors[2] = 0;
+				if (IsPlayerUltimateFull(i)) {
+					if (g_bUltimateMode[i]) {
+						switch (GetClientTeam(i)) {
+							case 2: {
+								colors[0] = 255;
+								colors[1] = 0;
+								colors[2] = 0;
+							}
+							case 3: {
+								colors[0] = 0;
+								colors[1] = 0;
+								colors[2] = 255;
+							}
 						}
-						case 3: {
-							colors[0] = 0;
-							colors[1] = 0;
-							colors[2] = 255;
+
+						if (g_flUltimateEndTime[i] <= 0.0) {
+							g_flUltimateEndTime[i] = time + 2.5;
+							TF2_AddCondition(i, TFCond_SpeedBuffAlly, 2.5); // 1.0
+							TF2_AddCondition(i, TFCond_Buffed, 2.5); // 1.0
+							TF2_AddCondition(i, TFCond_Ubercharged, 2.5); // 1.0
+							SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 0, 4);
+							//SetWeaponBonusMode(i, true);
+
+							EmitSoundToAll(SFX_ULTIMATE_INTRO, i);
+							EmitSoundToAll(SFX_ULTIMATE_BEEP, i);
+							//CreateTimer(6.0, Timer_EmitDetonateSound, i);
+							//g_flNextRocketFire[i] = time + 10.0;
+							SetEntProp(i, Prop_Send, "m_bGlowEnabled", 1);
+							g_iUltimateStatus[i] = ULTIMATE_ACTIVATED;
+
+							if (g_hUltimateTimer[i] == INVALID_HANDLE) {
+								g_hUltimateTimer[i] = CreateTimer(1.0, Timer_PlayerBeepSound, i, TIMER_REPEAT);
+							}
 						}
-					}
+						else {
+							if (time > g_flUltimateEndTime[i]) {
+								g_flUltimateEndTime[i] = -1.0;
+								g_flUltimateDamage[i] = 0.0;
+								g_bUltimateMode[i] = false;
+								g_bUltimateEnabled[i] = true;
+								g_bUltimateRagdoll[i] = true;
 
-					if (g_flUltimateEndTime[i] <= 0.0) {
-						g_flUltimateEndTime[i] = time + 10.0;
-						TF2_AddCondition(i, TFCond_CritOnKill, 10.0); // 1.0
-						TF2_AddCondition(i, TFCond_Buffed, 10.0); // 1.0
-						SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 1, 4);
-						SetWeaponBonusMode(i, true);
+								g_iUltimateStatus[i] = ULTIMATE_EXPLODED;
 
-						EmitSoundToAll(SFX_ULTIMATE, i);
-						CreateTimer(0.0, Timer_EmitReloadStartSound, i);
-						CreateTimer(0.5, Timer_EmitReloadEndSound, i);
-						g_flNextRocketFire[i] = time + 2.0;
+								float pos[3];
+								GetClientAbsOrigin(i, pos);
+								DetonateStickyBomb(i, pos, false, 500, g_cvUltimateRadius.IntValue, true);
+								ForcePlayerSuicide(i);
+
+								EmitSoundToAll(SFX_ULTIMATE_EXPLO, i);
+								ShowParticle("explosionTrail_seeds_mvm", 10.0, pos);
+								ShowParticle("fluidSmokeExpl_ring_mvm", 10.0, pos);
+							}
+
+							if (time >= g_flUltimateEndTime[i] - 2.2) {
+								SetUltimateReadyState(i);
+							}
+						}
 					}
 					else {
-						if (time > g_flUltimateEndTime[i]) {
-							g_flUltimateEndTime[i] = -1.0;
-							g_flUltimateDamage[i] = 0.0;
-							SetEntData(weapon, FindSendPropInfo("CBaseCombatWeapon", "m_iClip1"), 0, 4);
-							SetWeaponBonusMode(i, false);
-							g_bUltimateMode[i] = false;
-						}
+						if (g_iUltimateStatus[i] < ULTIMATE_FULL) g_iUltimateStatus[i] = ULTIMATE_FULL;
 					}
 				}
 
 				char ultimate[256];
-				Format(ultimate, sizeof(ultimate), "NUKE: %.0f%%", ultimate_percentage);
-				if (IsPlayerUltimateFull(i) && !IsWeaponInBonusMode(weapon)) Format(ultimate, sizeof(ultimate), "NUKE: E");
+				Format(ultimate, sizeof(ultimate), "SELF-DESTRUCT: %.0f%%", ultimate_percentage);
+				if (IsPlayerUltimateFull(i) && !IsWeaponInBonusMode(weapon)) Format(ultimate, sizeof(ultimate), "SELF-DESTRUCT: E");
 				SetHudTextParams(-1.0, 0.8, TIMER_INTERVAL, colors[0], colors[1], colors[2], 255, _, 1.0, 0.07, 0.5);
 
 				ShowSyncHudText(i, g_hUltimateHud, ultimate);
@@ -1060,7 +1245,7 @@ public Action OnPlayerRunCmd(int client, int& buttons, int& impulse, float vel[3
 		}
 		else {
 			if (buttons & IN_ATTACK || buttons & IN_ATTACK2) {
-				if (time >= g_flNextRocketFire[client]) {
+				if (time >= g_flNextRocketFire[client] && !g_bUltimateMode[client]) {
 					bool directhit = false;
 					if (buttons & IN_ATTACK2) directhit = true;
 					CreateRocket(client, directhit);
@@ -1118,7 +1303,7 @@ public void OnButtonPress(int client, int& button)
 		EmitSoundToAll(SFX_FORWARD, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_STOPLOOPING, 0.0, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
 	}
 
-	if (button & IN_JUMP) {
+	if (button & IN_JUMP && !g_bUltimateMode[client]) {
 		g_flSpaceTime[client] = GetGameTime();
 
 		PlaceTankStickyBomb(client);
@@ -1226,7 +1411,7 @@ stock void CreateRocket(int client, bool directhit = false)
 
 	//fake animations
 	TE_Start("PlayerAnimEvent");
-	//TE_WriteEncodedEnt("m_hPlayer", client);
+	//TE_WriteEncodedEnt("m_hPlayer", client); // doesn't work? idk
 	TE_WriteNum("m_hPlayer", GetWeaponAnimOwner(client));
 	TE_WriteNum("m_iEvent", 0);
 	TE_WriteNum("m_nData", 0);
@@ -1292,16 +1477,6 @@ stock void CreateUltimateRocket(int client)
 	TE_WriteNum("m_iEvent", 0);
 	TE_WriteNum("m_nData", 0);
 	TE_SendToAll();
-}
-
-stock int GetWeaponAnimOwner(int client)
-{
-	if (!IsValidClient(client)) return 0;
-
-	int active_weapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
-	if (!IsValidEntity(active_weapon)) return 0;
-	
-	return GetEntProp(active_weapon, Prop_Send, "m_hOwnerEntity");
 }
 
 stock bool RemoveWearable(int client, int id)
@@ -1453,23 +1628,34 @@ stock void PlaceTankStickyBomb(int client, bool force_jumper = false)
 	}
 	else g_flNextStickyTime[client] = time + 8.0;
 	
-
 	EmitSoundToClient(client, SFX_STICKYBOMB);
 }
 
-stock void DetonateStickyBomb(int owner, float pos[3], bool jumper, int damage = 100, int radius = 90)
+stock void DetonateStickyBomb(int owner, float pos[3], bool jumper, int damage = 100, int radius = 90, bool ultimate = false)
 {
 	int explode = CreateEntityByName("env_explosion");
 	if(!IsValidEntity(explode)) return;
 
 	char targetname[128];
-	Format(targetname, sizeof(targetname), "|explode_%d", owner);
 
 	int flags = 2;
 	if (jumper) {
 		EmitSoundToAll(SFX_JUMPER, owner);
 		Format(targetname, sizeof(targetname), "|jumper_%d", owner);
 		flags = 66;
+	}
+	else {
+		char explo_sound[PLATFORM_MAX_PATH];
+		Format(explo_sound, sizeof(explo_sound), "weapons/air_burster_explode%d.wav", GetRandomInt(1, 3));
+		PrecacheSound(explo_sound);
+
+		EmitSoundToAll(explo_sound, owner);
+		Format(targetname, sizeof(targetname), "|explode_%d", owner);
+	}
+
+	if (ultimate) {
+		//EmitSoundToAll(SFX_JUMPER, owner);
+		Format(targetname, sizeof(targetname), "|ultimate_%d", owner);
 	}
 
 	char spawnflags[4];
@@ -1488,6 +1674,8 @@ stock void DetonateStickyBomb(int owner, float pos[3], bool jumper, int damage =
 	ActivateEntity(explode);
 	AcceptEntityInput(explode, "Explode");
 	AcceptEntityInput(explode, "Kill");
+
+	ShowParticle("ExplosionCore_MidAir", 0.5, pos);
 }
 
 stock void DestroyStickyBomb(int client) {
@@ -1706,9 +1894,13 @@ stock bool IsMapMVM()
 stock float AddPlayerUltimate(int client, float amount)
 {
 	float new_value = g_flUltimateDamage[client] + amount;
-	if (new_value > g_cvUltimateCap.FloatValue) new_value = g_cvUltimateCap.FloatValue;
+	if (new_value >= g_cvUltimateCap.FloatValue) {
+		if (g_flOldDamage[client] < g_cvUltimateCap.FloatValue) EmitSoundToClient(client, SFX_CHARGED);
+		new_value = g_cvUltimateCap.FloatValue;
+	}
 
 	g_flUltimateDamage[client] = new_value;
+	g_flOldDamage[client] = g_flUltimateDamage[client];
 	return new_value;
 }
 
@@ -1719,7 +1911,15 @@ stock bool IsPlayerUltimateFull(int client)
 
 stock void ActivatePlayerUltimate(int client)
 {
-	if (g_bUltimateMode[client]) return;
+	float time = GetGameTime();
+	if (g_bUltimateMode[client] && time <= g_flUltimateEndTime[client] - 2.2) {
+		//float time_diff = g_flUltimateEndTime[client] - GetGameTime();
+		//if (time_diff < 2.0) return;
+
+		g_flUltimateEndTime[client] = time + 2.2;
+		SetUltimateReadyState(client);
+		return;
+	}
 
 	FakeClientCommand(client, "voicemenu 2 1"); // battlecry
 	g_bUltimateMode[client] = true;
@@ -1768,4 +1968,29 @@ stock bool IsRocketPowerShot(int rocket)
 	if (StrContains(targetname, "_tank_rocket_ultimate") != -1) return true;
 
 	return false;
+}
+
+stock void SetUltimateReadyState(int client)
+{
+	if (g_iUltimateStatus[client] < ULTIMATE_EXPLODING) {
+		if (g_hUltimateTimer[client] != INVALID_HANDLE) {
+			CloseHandle(g_hUltimateTimer[client]);
+			g_hUltimateTimer[client] = INVALID_HANDLE;
+		}
+
+		g_flTankOldSpeed[client] = g_flTankMaxSpeed[client];
+		g_iUltimateStatus[client] = ULTIMATE_EXPLODING;
+
+		EmitSoundToAll(SFX_ULTIMATE, client, SNDCHAN_AUTO, SNDLEVEL_SCREAMING, SND_CHANGEVOL, SNDVOL_HALF, SNDPITCH_NORMAL, -1, NULL_VECTOR, NULL_VECTOR, true, 0.0);
+	}
+}
+
+public Action Timer_PlayerBeepSound(Handle timer, any client)
+{
+	if (!IsValidClient(client)) return Plugin_Continue;
+	if (!IsPlayerAlive(client)) return Plugin_Continue;
+
+	EmitSoundToAll(SFX_TIMER, client);
+
+	return Plugin_Continue;
 }
